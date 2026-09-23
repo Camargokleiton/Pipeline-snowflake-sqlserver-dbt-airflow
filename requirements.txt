@@ -1,0 +1,5 @@
+apache-airflow-providers-microsoft-mssql
+apache-airflow-providers-snowflake
+dbt-snowflake
+pandas
+pyodbc
