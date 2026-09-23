@@ -1,21 +1,20 @@
-version: '3.8'
-
 x-airflow-common:
   &airflow-common
-  image: apache/airflow:2.9.1-python3.11
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.2}
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__LOGGING__LOG_CLI_COMMANDS: 'False'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
   volumes:
-    - ./dags:/opt/airflow/dags
-    - ./logs:/opt/airflow/logs
-    - ./plugins:/opt/airflow/plugins
-    - ./config:/opt/airflow/config
+    - ./docker/dags:/opt/airflow/dags
+    - ./docker/logs:/opt/airflow/logs
+    - ./docker/plugins:/opt/airflow/plugins
+    - ./docker/config:/opt/airflow/config
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     postgres:
@@ -37,7 +36,7 @@ services:
       - sqlserver_data:/var/opt/mssql
 
   # ============================================================================
-  # 2. AIRFLOW METADATA DATABASE: PostgreSQL (Airflow Internal Backend)
+  # 2. AIRFLOW METADATA DATABASE: PostgreSQL
   # ============================================================================
   postgres:
     image: postgres:13
@@ -55,12 +54,29 @@ services:
       retries: 5
 
   # ============================================================================
-  # 3. APACHE AIRFLOW (Webserver + Scheduler + Init)
+  # 3. APACHE AIRFLOW SERVICES (Airflow 3.x)
   # ============================================================================
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_WWW_USER_USERNAME}" \
+          --password "${AIRFLOW_WWW_USER_PASSWORD}" \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com || true
+    user: "0:0"
+
   airflow-webserver:
     <<: *airflow-common
     container_name: airflow_webserver
-    command: webserver
+    command: bash -c "airflow db migrate && airflow api-server"
     ports:
       - "8080:8080"
     healthcheck:
@@ -75,22 +91,10 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     container_name: airflow_scheduler
-    command: scheduler
+    command: bash -c "airflow db migrate && airflow scheduler"
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-
-  airflow-init:
-    <<: *airflow-common
-    container_name: airflow_init
-    command: version
-    environment:
-      <<: *airflow-common-env
-      _AIRFLOW_DB_MIGRATE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: "${AIRFLOW_WWW_USER_USERNAME}"
-      _AIRFLOW_WWW_USER_PASSWORD: "${AIRFLOW_WWW_USER_PASSWORD}"
-    user: "0:0"
 
 volumes:
   sqlserver_data:
