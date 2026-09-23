@@ -33,7 +33,7 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
     Extrai do SQL Server, gera arquivo Parquet local, envia para o Snowflake Stage
     e executa o COPY INTO de forma idempotente na camada BRONZE_RAW.
     """
-    print(f"🚀 Starting extraction to Parquet for table: {table_name}")
+    print(f"Starting extraction to Parquet for table: {table_name}")
 
     # 1. Extração do SQL Server
     mssql_hook = MsSqlHook(mssql_conn_id='mssql_default')

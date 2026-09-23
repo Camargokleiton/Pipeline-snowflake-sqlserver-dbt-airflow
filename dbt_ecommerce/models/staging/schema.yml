@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: stg_customers
+    columns:
+      - name: id_customer
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_categories
+    columns:
+      - name: id_category
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_products
+    columns:
+      - name: id_product
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_orders
+    columns:
+      - name: id_order
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_order_items
+    columns:
+      - name: id_item
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_payments
+    columns:
+      - name: id_payment
+        tests:
+          - unique
+          - not_null

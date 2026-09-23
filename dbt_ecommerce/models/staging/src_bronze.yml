@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: bronze_raw
+    database: ERP_ECOMMERCE_DW
+    schema: BRONZE_RAW
+    tables:
+      - name: raw_customers
+      - name: raw_categories
+      - name: raw_products
+      - name: raw_orders
+      - name: raw_order_items
+      - name: raw_payments
