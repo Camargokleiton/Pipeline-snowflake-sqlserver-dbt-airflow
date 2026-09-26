@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 
@@ -111,7 +111,7 @@ with DAG(
     dag_id='dag_sqlserver_to_snowflake_bronze',
     default_args=default_args,
     description='Pipeline ELT via Parquet: Extrai do SQL Server, gera Parquet e carrega no Snowflake Bronze',
-    schedule_interval='@daily',
+    schedule='*/5 * * * *',
     catchup=False,
     tags=['ingestion', 'sqlserver', 'snowflake', 'bronze', 'parquet']
 ) as dag:

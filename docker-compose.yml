@@ -1,15 +1,20 @@
 x-airflow-common:
   &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.2}
+  image: pipeline-airflow:3.3.2
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__LOGGING__LOG_CLI_COMMANDS: 'False'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW_CONN_MSSQL_DEFAULT: "{\"conn_type\":\"mssql\",\"host\":\"sqlserver\",\"login\":\"${SQLSERVER_USER:-sa}\",\"password\":\"${MSSQL_SA_PASSWORD}\",\"schema\":\"${MSSQL_DATABASE:-ERP_DATABASE}\",\"port\":1433}"
   volumes:
     - ./docker/dags:/opt/airflow/dags
     - ./docker/logs:/opt/airflow/logs
@@ -63,18 +68,26 @@ services:
     command:
       - -c
       - |
+        set -e
         airflow db migrate
-        airflow users create --username "${AIRFLOW_WWW_USER_USERNAME:-airflow}" --password "${AIRFLOW_WWW_USER_PASSWORD:-airflow}" --firstname "${AIRFLOW_WWW_USER_FIRSTNAME:-Airflow}" --lastname "${AIRFLOW_WWW_USER_LASTNAME:-Admin}" --role "${AIRFLOW_WWW_USER_ROLE:-Admin}" --email "${AIRFLOW_WWW_USER_EMAIL:-admin@example.com}" || true
-    user: "0:0"
+        airflow users create --username "${AIRFLOW_WWW_USER_USERNAME:-airflow}" --password "${AIRFLOW_WWW_USER_PASSWORD:-airflow}" --firstname "${AIRFLOW_WWW_USER_FIRSTNAME:-Airflow}" --lastname "${AIRFLOW_WWW_USER_LASTNAME:-Admin}" --role "${AIRFLOW_WWW_USER_ROLE:-Admin}" --email "${AIRFLOW_WWW_USER_EMAIL:-admin@example.com}" || airflow users reset-password --username "${AIRFLOW_WWW_USER_USERNAME:-airflow}" --password "${AIRFLOW_WWW_USER_PASSWORD:-airflow}"
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow_dag_processor
+    command: airflow dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-webserver:
     <<: *airflow-common
     container_name: airflow_webserver
-    command: bash -c "airflow db migrate && airflow api-server"
+    command: airflow api-server
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -85,7 +98,7 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     container_name: airflow_scheduler
-    command: bash -c "airflow db migrate && airflow scheduler"
+    command: airflow scheduler
     depends_on:
       airflow-init:
         condition: service_completed_successfully
