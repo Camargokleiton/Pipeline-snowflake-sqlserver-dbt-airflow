@@ -15,8 +15,17 @@ x-airflow-common:
     AIRFLOW__LOGGING__LOG_CLI_COMMANDS: 'False'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW_CONN_MSSQL_DEFAULT: "{\"conn_type\":\"mssql\",\"host\":\"sqlserver\",\"login\":\"${SQLSERVER_USER:-sa}\",\"password\":\"${MSSQL_SA_PASSWORD}\",\"schema\":\"${MSSQL_DATABASE:-ERP_DATABASE}\",\"port\":1433}"
+    SQLSERVER_HOST: sqlserver
+    SQLSERVER_USER: "${SQLSERVER_USER:-sa}"
+    MSSQL_PORT: "1433"
+    MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+    FAKE_CATEGORIES: "${FAKE_CATEGORIES:-5}"
+    FAKE_CUSTOMERS: "${FAKE_CUSTOMERS:-50}"
+    FAKE_PRODUCTS: "${FAKE_PRODUCTS:-100}"
+    FAKE_ORDERS: "${FAKE_ORDERS:-200}"
   volumes:
     - ./docker/dags:/opt/airflow/dags
+    - ./data_font/fake_ingest_sqlserver_database:/opt/airflow/data_font/fake_ingest_sqlserver_database:ro
     - ./docker/logs:/opt/airflow/logs
     - ./docker/plugins:/opt/airflow/plugins
     - ./docker/config:/opt/airflow/config

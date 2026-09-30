@@ -111,7 +111,7 @@ with DAG(
     dag_id='dag_sqlserver_to_snowflake_bronze',
     default_args=default_args,
     description='Pipeline ELT via Parquet: Extrai do SQL Server, gera Parquet e carrega no Snowflake Bronze',
-    schedule='*/5 * * * *',
+    schedule=None,
     catchup=False,
     tags=['ingestion', 'sqlserver', 'snowflake', 'bronze', 'parquet']
 ) as dag:
