@@ -2,8 +2,8 @@ version: 2
 
 sources:
   - name: bronze_raw
-    database: ERP_ECOMMERCE_DW
-    schema: BRONZE_RAW
+    database: ERP_DATABASE
+    schema: BRONZE
     tables:
       - name: raw_customers
       - name: raw_categories

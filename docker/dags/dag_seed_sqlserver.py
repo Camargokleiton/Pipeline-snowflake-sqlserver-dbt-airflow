@@ -1,8 +1,11 @@
+import sys
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+
+sys.path.insert(0, "/opt/airflow")
 
 
 def generate_fake_data_task():

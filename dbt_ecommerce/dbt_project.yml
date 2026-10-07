@@ -32,8 +32,8 @@ clean-targets:         # directories to be removed by `dbt clean`
 models:
   dbt_ecommerce:
     marts:
-        +schema : GOLD
-        +materialized: table
+      +schema: GOLD
+      +materialized: table
     staging:
-        +schema : SILVER
-        +materialized: view
+      +schema: SILVER
+      +materialized: view

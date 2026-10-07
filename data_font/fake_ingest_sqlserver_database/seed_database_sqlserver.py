@@ -11,11 +11,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SERVER = os.getenv("SQLSERVER_HOST", "localhost") + "," + os.getenv("MSSQL_PORT", "1433")
+
+def resolve_driver():
+    configured_driver = os.getenv("ODBC_DRIVER")
+    if configured_driver:
+        return configured_driver
+
+    installed_drivers = pyodbc.drivers()
+    for candidate in ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server"]:
+        if candidate in installed_drivers:
+            return candidate
+
+    raise RuntimeError(
+        "Nenhum driver ODBC do SQL Server foi encontrado. Instale 'ODBC Driver 17 for SQL Server' ou 'ODBC Driver 18 for SQL Server'."
+    )
+
+
+SERVER = os.getenv("SQLSERVER_HOST", "127.0.0.1") + "," + os.getenv("MSSQL_PORT", "11433")
 USER = os.getenv("SQLSERVER_USER", "sa")
 PASSWORD = os.getenv("PASSWORD") or os.getenv("MSSQL_SA_PASSWORD", "")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "ERP_Ecommerce")
-DRIVER = os.getenv("ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
+DRIVER = resolve_driver()
 
 CONN_STR_MASTER = (
     f"DRIVER={{{DRIVER}}};SERVER={SERVER};UID={USER};PWD={PASSWORD};"
