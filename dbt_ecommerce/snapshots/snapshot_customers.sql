@@ -5,8 +5,17 @@
       target_database='ERP_DATABASE',
       target_schema='SILVER',
       unique_key='id_customer',
-      strategy='timestamp',
-      updated_at='updated_at'
+      strategy='check',
+      check_cols=[
+        'full_name',
+        'email',
+        'cpf',
+        'address',
+        'city',
+        'state',
+        'zip_code',
+        'created_at'
+      ]
     )
 }}
 

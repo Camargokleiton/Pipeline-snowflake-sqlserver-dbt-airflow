@@ -19,21 +19,25 @@ flowchart LR
     P[("PostgreSQL · Airflow metadata")] --- A
 ```
 
+![Pipeline architecture diagram](./diagram/Diagram.png)
+
 ### Data layers
 
 | Layer | Purpose | Implementation |
 | --- | --- | --- |
 | **Bronze** | Raw copies of the SQL Server source tables, including extraction timestamps. | Airflow extracts to Parquet and loads `RAW_*` tables into `ERP_DATABASE.BRONZE`. |
-| **Silver** | Cleaned and standardized staging models. | dbt creates views in `ERP_DATABASE.SILVER`. |
-| **Gold** | Analytics-ready customer/product dimensions and an order-level fact table. | dbt creates `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `FCT_ORDERS` tables in `ERP_DATABASE.GOLD`. |
+| **Silver** | Cleaned staging views and dbt snapshots that retain source history. | dbt creates staging views and the `SNAPSHOT_CUSTOMERS` and `SNAPSHOT_PRODUCTS` history tables in `ERP_DATABASE.SILVER`. |
+| **Gold** | Type 2 customer/product dimensions and an order-level fact table. | dbt creates `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `FCT_ORDERS` tables in `ERP_DATABASE.GOLD`. |
 
 ### Gold marts
 
 | Model | Grain | Contents |
 | --- | --- | --- |
-| `dim_customers` | One row per customer | Customer identity, contact, and location attributes. |
-| `dim_products` | One row per product | Product, pricing, inventory, and joined category attributes. |
-| `fct_orders` | One row per order | Order totals, shipping, item-line count, total quantity, item subtotal, and payment details. Item and payment data are aggregated before joining so they do not multiply order rows. |
+| `dim_customers` | One row per customer version | Customer identity, contact, and location history; includes `customer_sk`, `valid_from`, `valid_to`, and `is_current`. |
+| `dim_products` | One row per product version | Product, pricing, inventory, and category history; includes `product_sk`, `valid_from`, `valid_to`, and `is_current`. |
+| `fct_orders` | One row per order | Order totals, shipping, item-line count, total quantity, item subtotal, and payment details, linked to the customer version effective on the order date. Item and payment data are aggregated before joining so they do not multiply order rows. |
+
+Customer and product history is maintained by dbt snapshots (SCD Type 2). Customer changes use the source `updated_at` timestamp. Product snapshots check product attributes and joined category attributes, so those changes are captured the next time snapshots run. The first observed version starts at the source `created_at` when available; subsequent versions retain the snapshot's change timestamp.
 
 ## Technology stack
 
@@ -142,26 +146,28 @@ Set `DBT_SNOWFLAKE_PASSWORD` in your local shell, then run from the repository r
 dbt debug --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
+dbt snapshot --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-The profile's `schema: BRONZE` is the default schema; the project's schema-generation macro routes staging models to `SILVER` and marts to `GOLD`. Bronze source definitions are in [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
+Run `dbt snapshot` after each new Bronze ingestion to capture changes before rebuilding the Gold marts. Snapshots retain history only from their first run onward; changes that happened before snapshot history was initialized cannot be reconstructed automatically.
+
+The profile's `schema: BRONZE` is the default schema; the project's schema-generation macro routes staging models and snapshots to `SILVER` and marts to `GOLD`. Bronze source definitions are in [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Operational notes
 
 - Airflow automates data generation and Bronze ingestion. **dbt is not currently part of the Airflow DAGs**; run the dbt commands separately after ingestion.
-- Staging models are views; Gold marts are tables.
-- The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC.
-- The generator appends synthetic rows on each run. Adjust the `FAKE_*` settings to control the size of each batch.
+- Staging models are views, dbt snapshots are history tables in Silver, and Gold marts are tables.
+- The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC. Datetimes are serialized as ISO strings in Parquet and loaded into Snowflake timestamp columns to avoid timestamp-unit corruption.
+- The generator appends synthetic rows on each run and aligns each customer's creation date with their earliest generated order. Adjust the `FAKE_*` settings to control the size of each batch.
 - `docker compose down` stops the services. Docker volumes preserve SQL Server and Airflow metadata; removing volumes deletes that local state.
 
 ## Validation performed
 
-- Both Airflow DAGs completed a seed-to-Bronze run successfully.
-- All six dbt Silver staging views and all three Gold mart tables built successfully.
-- All 26 dbt data tests passed across Silver and Gold, including uniqueness, required fields, and relationships.
-- The complete nine-model dbt build finished successfully with no errors or warnings.
+- The seed and Snowflake ingestion DAGs completed successfully after the timestamp and generated-date fixes.
+- The complete dbt build passed: 2 snapshots, 9 models, and 36 data tests (47 total successful results).
+- All 14,200 Gold order rows matched a customer dimension version effective on the order date.
 
 ## English / Português
 
@@ -190,21 +196,25 @@ flowchart LR
     P[("PostgreSQL · metadados do Airflow")] --- A
 ```
 
+![Diagrama da arquitetura do pipeline](./diagram/Diagram.png)
+
 ### Camadas de dados
 
 | Camada | Objetivo | Implementação |
 | --- | --- | --- |
 | **Bronze** | Cópias brutas das tabelas de origem do SQL Server, com data de extração. | Airflow extrai para Parquet e carrega tabelas `RAW_*` em `ERP_DATABASE.BRONZE`. |
-| **Silver** | Modelos de staging limpos e padronizados. | dbt cria views em `ERP_DATABASE.SILVER`. |
-| **Gold** | Dimensões de clientes/produtos e fato analítico no nível do pedido. | dbt cria as tabelas `DIM_CUSTOMERS`, `DIM_PRODUCTS` e `FCT_ORDERS` em `ERP_DATABASE.GOLD`. |
+| **Silver** | Views de staging limpas e snapshots dbt que preservam histórico. | dbt cria views de staging e as tabelas históricas `SNAPSHOT_CUSTOMERS` e `SNAPSHOT_PRODUCTS` em `ERP_DATABASE.SILVER`. |
+| **Gold** | Dimensões SCD Type 2 de clientes/produtos e fato analítico no nível do pedido. | dbt cria as tabelas `DIM_CUSTOMERS`, `DIM_PRODUCTS` e `FCT_ORDERS` em `ERP_DATABASE.GOLD`. |
 
 ### Marts Gold
 
 | Modelo | Granularidade | Conteúdo |
 | --- | --- | --- |
-| `dim_customers` | Uma linha por cliente | Identificação, contato e localização do cliente. |
-| `dim_products` | Uma linha por produto | Produto, preços, estoque e atributos da categoria relacionada. |
-| `fct_orders` | Uma linha por pedido | Totais, frete, quantidade de itens, quantidade total, subtotal dos itens e dados de pagamento. Itens e pagamentos são agregados antes dos joins para não multiplicar pedidos. |
+| `dim_customers` | Uma linha por versão do cliente | Histórico de identificação, contato e localização; inclui `customer_sk`, `valid_from`, `valid_to` e `is_current`. |
+| `dim_products` | Uma linha por versão do produto | Histórico do produto, preço, estoque e categoria; inclui `product_sk`, `valid_from`, `valid_to` e `is_current`. |
+| `fct_orders` | Uma linha por pedido | Totais, frete, quantidade de itens, quantidade total, subtotal e pagamentos, ligado à versão do cliente válida na data do pedido. Itens e pagamentos são agregados antes dos joins para não multiplicar pedidos. |
+
+O histórico de clientes e produtos é mantido por snapshots do dbt (SCD Type 2). Alterações de clientes usam o timestamp de origem `updated_at`. Para produtos, snapshots verificam atributos do produto e da categoria relacionada; as mudanças são capturadas na próxima execução dos snapshots. A primeira versão observada começa em `created_at` quando disponível; as versões seguintes usam o timestamp da alteração capturada pelo snapshot.
 
 ## Tecnologias
 
@@ -313,23 +323,25 @@ Defina `DBT_SNOWFLAKE_PASSWORD` no terminal local e execute, a partir da raiz do
 dbt debug --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
+dbt snapshot --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona os modelos de staging para `SILVER` e os marts para `GOLD`. As fontes Bronze estão definidas em [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
+Execute `dbt snapshot` após cada nova ingestão para capturar alterações antes de reconstruir os marts Gold. Os snapshots preservam o histórico somente a partir da primeira execução; alterações anteriores à inicialização não podem ser reconstruídas automaticamente.
+
+O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona os modelos de staging e snapshots para `SILVER` e os marts para `GOLD`. As fontes Bronze estão definidas em [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Observações operacionais
 
 - O Airflow automatiza a geração dos dados e a ingestão no Bronze. **O dbt ainda não faz parte das DAGs do Airflow**; execute os comandos do dbt separadamente após a ingestão.
-- Os modelos de staging são views; os marts Gold são tabelas.
-- A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental.
-- O gerador acrescenta dados sintéticos a cada execução. Ajuste as variáveis `FAKE_*` para controlar o tamanho de cada carga.
+- Os modelos staging são views, snapshots dbt são tabelas históricas na Silver e os marts Gold são tabelas.
+- A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental. Datas são serializadas como strings ISO no Parquet e carregadas em colunas timestamp no Snowflake para evitar corrupção da unidade temporal.
+- O gerador acrescenta dados sintéticos a cada execução e alinha a data de criação de cada cliente ao seu primeiro pedido gerado. Ajuste as variáveis `FAKE_*` para controlar o tamanho de cada carga.
 - `docker compose down` para os serviços. Os volumes Docker preservam os dados locais do SQL Server e os metadados do Airflow; removê-los apaga esse estado local.
 
 ## Validações realizadas
 
-- As duas DAGs do Airflow concluíram com sucesso uma execução da geração até a carga Bronze.
-- As seis views de staging Silver e as três tabelas marts Gold foram criadas com sucesso pelo dbt.
-- Os 26 testes dbt das camadas Silver e Gold passaram, incluindo unicidade, campos obrigatórios e relacionamentos.
-- O build completo dos nove modelos dbt terminou sem erros ou avisos.
+- As DAGs de geração e ingestão Snowflake concluíram com sucesso após as correções de timestamps e datas dos dados sintéticos.
+- O build completo do dbt passou: 2 snapshots, 9 modelos e 36 testes (47 resultados bem-sucedidos no total).
+- Todas as 14.200 linhas de pedidos Gold foram associadas a uma versão da dimensão de clientes válida na data do pedido.

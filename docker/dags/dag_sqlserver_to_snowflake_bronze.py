@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 from airflow import DAG
@@ -35,6 +35,11 @@ SNOWFLAKE_CONN_ID = "snowflake"
 
 def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
     dtype = str(series.dtype).lower()
+    if pd.api.types.is_datetime64_any_dtype(series.dtype) or (
+        series.dtype == object
+        and any(isinstance(value, (date, datetime)) for value in series.dropna().head(20))
+    ):
+        return "TIMESTAMP_NTZ"
     if "int" in dtype or "uint" in dtype:
         return "NUMBER"
     if "float" in dtype or "double" in dtype or "decimal" in dtype:
@@ -44,6 +49,18 @@ def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
     if "datetime" in dtype or "date" in dtype:
         return "TIMESTAMP"
     return "VARCHAR"
+
+
+def _serialize_timestamps_for_parquet(
+    dataframe: pd.DataFrame,
+    snowflake_types: dict[str, str],
+) -> None:
+    for column, snowflake_type in snowflake_types.items():
+        if snowflake_type == "TIMESTAMP_NTZ":
+            values = pd.to_datetime(dataframe[column], errors="raise")
+            if values.dt.tz is not None:
+                values = values.dt.tz_convert("UTC").dt.tz_localize(None)
+            dataframe[column] = values.dt.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def create_snowflake_bronze_target():
@@ -92,8 +109,12 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
         print(f"Table {table_name} is empty. Skipping processing.")
         return
     df.columns = [str(col).lower() for col in df.columns]
-    df.columns = [str(col).lower() for col in df.columns]
     df = df.drop_duplicates(subset=[primary_key.lower()])
+    snowflake_types = {
+        column: _snowflake_type_from_pandas_series(df[column])
+        for column in df.columns
+    }
+    _serialize_timestamps_for_parquet(df, snowflake_types)
 
     os.makedirs(TEMP_DIR, exist_ok=True)
     parquet_path = os.path.join(TEMP_DIR, f"{table_name}.parquet")
@@ -111,7 +132,7 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
         cursor.execute(
             f"CREATE TABLE IF NOT EXISTS {bronze_table} ("
             + ", ".join(
-                f'"{str(col).lower()}" {_snowflake_type_from_pandas_series(df[col])}'
+                f'"{str(col).lower()}" {snowflake_types[col]}'
                 for col in df.columns
             )
             + ")"
@@ -130,9 +151,16 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
             FILES = ('{table_name}.parquet')
             FILE_FORMAT = (TYPE = PARQUET)
             MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
-            ON_ERROR = 'CONTINUE';
+            ON_ERROR = 'ABORT_STATEMENT';
             """
         )
+        copy_results = cursor.fetchall()
+        loaded_rows = sum(int(result[3]) for result in copy_results)
+        if loaded_rows != len(df):
+            raise RuntimeError(
+                f"Expected to load {len(df)} rows into {bronze_table}, "
+                f"but Snowflake loaded {loaded_rows}."
+            )
         cursor.execute(
             f'UPDATE {bronze_table} SET "_extracted_at" = CURRENT_TIMESTAMP() '
             'WHERE "_extracted_at" IS NULL'

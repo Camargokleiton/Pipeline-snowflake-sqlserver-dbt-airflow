@@ -271,6 +271,21 @@ def insert_fake_data(counts, seed=None):
                     None if payment_status == "PENDING" else order_date,
                 ),
             )
+
+        cursor.execute(
+            """
+            UPDATE customer
+            SET created_at = first_orders.first_order_date
+            FROM dbo.customers AS customer
+            INNER JOIN (
+                SELECT id_customer, MIN(order_date) AS first_order_date
+                FROM dbo.orders
+                GROUP BY id_customer
+            ) AS first_orders
+                ON customer.id_customer = first_orders.id_customer
+            WHERE customer.created_at > first_orders.first_order_date
+            """
+        )
         conn.commit()
 
     print(

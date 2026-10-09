@@ -22,6 +22,7 @@ payment_totals as (
 select
     orders.id_order as order_id,
     orders.id_customer as customer_id,
+    customers.customer_sk,
     orders.order_date,
     orders.current_status as order_status,
     orders.total_value as order_total,
@@ -36,6 +37,13 @@ select
     orders.updated_at,
     orders._extracted_at
 from {{ ref('stg_orders') }} as orders
+left join {{ ref('dim_customers') }} as customers
+    on orders.id_customer = customers.customer_id
+    and orders.order_date >= customers.valid_from
+    and (
+        orders.order_date < customers.valid_to
+        or customers.valid_to is null
+    )
 left join order_item_totals
     on orders.id_order = order_item_totals.id_order
 left join payment_totals

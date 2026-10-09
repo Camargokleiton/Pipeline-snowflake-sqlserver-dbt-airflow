@@ -2,29 +2,41 @@ version: 2
 
 models:
   - name: dim_customers
-    description: One row per customer, with standardized customer and location attributes.
+    description: Type 2 customer dimension with one row per tracked version.
     columns:
-      - name: customer_id
-        description: Unique source customer identifier.
+      - name: customer_sk
+        description: Snapshot version key used to join facts to the correct customer history.
         tests:
           - unique
+          - not_null
+      - name: customer_id
+        description: Source customer identifier; repeated across historical versions.
+        tests:
           - not_null
       - name: email
         tests:
           - not_null
+      - name: valid_from
+        tests:
+          - not_null
+      - name: is_current
+        tests:
+          - not_null
 
   - name: dim_products
-    description: One row per product, enriched with its category attributes.
+    description: Type 2 product dimension with one row per tracked version and category attributes.
     columns:
-      - name: product_id
-        description: Unique source product identifier.
+      - name: product_sk
+        description: Snapshot version key for each product history record.
         tests:
           - unique
+          - not_null
+      - name: product_id
+        description: Source product identifier; repeated across historical versions.
+        tests:
           - not_null
       - name: sku
-        tests:
-          - unique
-          - not_null
+        tests: [not_null]
       - name: category_id
         tests:
           - not_null
@@ -32,6 +44,12 @@ models:
               arguments:
                 to: ref('stg_categories')
                 field: id_category
+      - name: valid_from
+        tests:
+          - not_null
+      - name: is_current
+        tests:
+          - not_null
 
   - name: fct_orders
     description: One row per order, with item totals and aggregated payment details.
@@ -48,6 +66,14 @@ models:
               arguments:
                 to: ref('dim_customers')
                 field: customer_id
+      - name: customer_sk
+        description: Customer version effective on the order date.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_sk
       - name: order_total
         tests:
           - not_null
