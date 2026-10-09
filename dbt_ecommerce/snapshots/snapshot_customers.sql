@@ -6,6 +6,7 @@
       target_schema='SILVER',
       unique_key='id_customer',
       strategy='check',
+      invalidate_hard_deletes=true,
       check_cols=[
         'full_name',
         'email',

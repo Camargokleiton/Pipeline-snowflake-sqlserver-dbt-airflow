@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -33,6 +34,27 @@ SNOWFLAKE_DATABASE = "ERP_DATABASE"
 BRONZE_SCHEMA = "BRONZE"
 SNOWFLAKE_CONN_ID = "snowflake"
 TIMESTAMP_COLUMNS = {"created_at", "updated_at", "order_date", "payment_date"}
+SOURCE_SQL_TYPES = {
+    "bigint": "NUMBER",
+    "int": "NUMBER",
+    "smallint": "NUMBER",
+    "tinyint": "NUMBER",
+    "decimal": "NUMBER",
+    "numeric": "NUMBER",
+    "money": "NUMBER",
+    "smallmoney": "NUMBER",
+    "float": "FLOAT",
+    "real": "FLOAT",
+    "bit": "BOOLEAN",
+    "date": "TIMESTAMP_NTZ",
+    "datetime": "TIMESTAMP_NTZ",
+    "datetime2": "TIMESTAMP_NTZ",
+    "smalldatetime": "TIMESTAMP_NTZ",
+    "time": "TIME",
+    "binary": "BINARY",
+    "varbinary": "BINARY",
+    "image": "BINARY",
+}
 
 
 def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
@@ -72,8 +94,15 @@ def _serialize_timestamps_for_parquet(
             dataframe[column] = values.dt.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _snowflake_type_from_sql_type(sql_type: str) -> str:
+    return SOURCE_SQL_TYPES.get(sql_type.lower(), "VARCHAR")
+
+
 def create_snowflake_bronze_target():
-    """Cria database, schema e stage no Snowflake antes da ingestão."""
+    """Create Snowflake targets and enable SQL Server change tracking."""
+    from data_font.fake_ingest_sqlserver_database import seed_database_sqlserver as seed_module
+
+    seed_module.ensure_schema()
     snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     conn = snowflake_hook.get_conn()
     cursor = conn.cursor()
@@ -84,16 +113,31 @@ def create_snowflake_bronze_target():
         cursor.execute(
             f"CREATE STAGE IF NOT EXISTS {SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.BRONZE_PARQUET_STAGE"
         )
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.INGESTION_WATERMARKS (
+                TABLE_NAME VARCHAR NOT NULL,
+                LAST_SYNC_VERSION NUMBER(38, 0) NOT NULL
+            )
+            """
+        )
 
         mssql_hook = MsSqlHook(mssql_conn_id="mssql_default")
         for table_name in TABLES_CONFIG:
-            df_schema = mssql_hook.get_pandas_df(f"SELECT TOP 0 * FROM dbo.{table_name}")
-            if df_schema.empty:
+            columns = mssql_hook.get_records(
+                f"""
+                SELECT COLUMN_NAME, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = '{table_name}'
+                ORDER BY ORDINAL_POSITION
+                """
+            )
+            if not columns:
                 continue
 
             columns_sql = ", ".join(
-                f'"{str(col).lower()}" {_snowflake_type_from_pandas_series(df_schema[col])}'
-                for col in df_schema.columns
+                f'"{column_name.lower()}" {_snowflake_type_from_sql_type(sql_type)}'
+                for column_name, sql_type in columns
             )
             raw_table_name = f"RAW_{table_name.upper()}"
             cursor.execute(
@@ -108,56 +152,166 @@ def create_snowflake_bronze_target():
 
 
 def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
-    """Lê do SQL Server, salva em parquet e carrega em bronze no Snowflake."""
-    print(f"Starting extraction to Parquet for table: {table_name}")
-
+    """Load SQL Server inserts, updates, and deletes since the saved CT version."""
     mssql_hook = MsSqlHook(mssql_conn_id="mssql_default")
-    df = mssql_hook.get_pandas_df(f"SELECT * FROM dbo.{table_name}")
-
-    if df.empty:
-        print(f"Table {table_name} is empty. Skipping processing.")
-        return
-    df.columns = [str(col).lower() for col in df.columns]
-    df = df.drop_duplicates(subset=[primary_key.lower()])
-    snowflake_types = {
-        column: _snowflake_type_from_pandas_series(df[column])
-        for column in df.columns
+    table_columns = mssql_hook.get_records(
+        f"""
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = '{table_name}'
+        ORDER BY ORDINAL_POSITION
+        """
+    )
+    if not table_columns:
+        raise RuntimeError(f"SQL Server source table dbo.{table_name} has no columns.")
+    column_names = [column_name.lower() for column_name, _ in table_columns]
+    source_types = {
+        column_name.lower(): _snowflake_type_from_sql_type(sql_type)
+        for column_name, sql_type in table_columns
     }
-    _serialize_timestamps_for_parquet(df, snowflake_types)
-
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    parquet_path = os.path.join(TEMP_DIR, f"{table_name}.parquet")
-    df.to_parquet(parquet_path, engine="pyarrow", compression="snappy", index=False)
 
     snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     conn = snowflake_hook.get_conn()
     cursor = conn.cursor()
-
     raw_table_name = f"RAW_{table_name.upper()}"
     bronze_table = f"{SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.{raw_table_name}"
-    stage_path = f"@{SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.BRONZE_PARQUET_STAGE/{table_name}/"
+    watermark_table = f"{SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.INGESTION_WATERMARKS"
+    qualified_source = f"dbo.{table_name}"
+    parquet_path = None
+    stage_path = None
 
     try:
+        versions = mssql_hook.get_first(
+            f"""
+            SELECT
+                CHANGE_TRACKING_CURRENT_VERSION(),
+                CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'{qualified_source}'))
+            """
+        )
+        upper_version, min_valid_version = versions
+        if upper_version is None:
+            raise RuntimeError("SQL Server Change Tracking is not enabled for the source database.")
+        upper_version = int(upper_version)
+
         cursor.execute(
-            f"CREATE TABLE IF NOT EXISTS {bronze_table} ("
-            + ", ".join(
-                f'"{str(col).lower()}" {snowflake_types[col]}'
-                for col in df.columns
+            f"SELECT LAST_SYNC_VERSION FROM {watermark_table} WHERE TABLE_NAME = %s",
+            (table_name,),
+        )
+        saved_watermark = cursor.fetchone()
+        last_version = int(saved_watermark[0]) if saved_watermark else None
+        full_refresh = (
+            last_version is None
+            or min_valid_version is None
+            or last_version < int(min_valid_version)
+            or last_version > upper_version
+        )
+
+        if full_refresh:
+            dataframe = mssql_hook.get_pandas_df(f"SELECT * FROM {qualified_source}")
+            dataframe["_operation"] = "I"
+        else:
+            selected_columns = ", ".join(
+                f"source.[{column_name}]"
+                if column_name != primary_key.lower()
+                else f"changes.[{primary_key}] AS [{column_name}]"
+                for column_name in column_names
             )
-            + ")"
+            changes_query = f"""
+                SELECT {selected_columns}, changes.SYS_CHANGE_OPERATION AS [_operation]
+                FROM CHANGETABLE(CHANGES {qualified_source}, {last_version}) AS changes
+                LEFT JOIN {qualified_source} AS source
+                    ON source.[{primary_key}] = changes.[{primary_key}]
+                WHERE changes.SYS_CHANGE_VERSION <= {upper_version}
+                ORDER BY changes.SYS_CHANGE_VERSION, changes.[{primary_key}]
+            """
+            dataframe = mssql_hook.get_pandas_df(changes_query)
+
+        dataframe.columns = [str(column).lower() for column in dataframe.columns]
+        if not dataframe.empty:
+            dataframe = dataframe.drop_duplicates(
+                subset=[primary_key.lower()],
+                keep="last",
+            )
+            dataframe["_extracted_at"] = datetime.utcnow().strftime(
+                "%Y-%m-%d %H:%M:%S.%f"
+            )
+
+        if not full_refresh and dataframe.empty:
+            cursor.execute("BEGIN")
+            try:
+                cursor.execute(
+                    f"""
+                    MERGE INTO {watermark_table} AS target
+                    USING (
+                        SELECT %s AS TABLE_NAME, %s AS LAST_SYNC_VERSION
+                    ) AS source
+                        ON target.TABLE_NAME = source.TABLE_NAME
+                    WHEN MATCHED THEN UPDATE
+                        SET LAST_SYNC_VERSION = source.LAST_SYNC_VERSION
+                    WHEN NOT MATCHED THEN INSERT (TABLE_NAME, LAST_SYNC_VERSION)
+                        VALUES (source.TABLE_NAME, source.LAST_SYNC_VERSION)
+                    """,
+                    (table_name, upper_version),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            print(
+                f"No changes found for dbo.{table_name}; "
+                f"watermark advanced to {upper_version}."
+            )
+            return
+
+        dataframe = dataframe.reindex(
+            columns=[*column_names, "_operation", "_extracted_at"]
         )
-        cursor.execute(
-            f'ALTER TABLE {bronze_table} ADD COLUMN IF NOT EXISTS "_extracted_at" TIMESTAMP_NTZ'
+        timestamp_columns = {
+            column: "TIMESTAMP_NTZ"
+            for column, snowflake_type in source_types.items()
+            if snowflake_type == "TIMESTAMP_NTZ"
+        }
+        timestamp_columns["_extracted_at"] = "TIMESTAMP_NTZ"
+        _serialize_timestamps_for_parquet(dataframe, timestamp_columns)
+
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        run_token = uuid.uuid4().hex
+        file_name = f"{table_name}_{run_token}.parquet"
+        parquet_path = os.path.join(TEMP_DIR, file_name)
+        dataframe.to_parquet(
+            parquet_path,
+            engine="pyarrow",
+            compression="snappy",
+            index=False,
+        )
+        stage_path = (
+            f"@{SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.BRONZE_PARQUET_STAGE/"
+            f"{table_name}/{run_token}/"
+        )
+        temp_table = f"INGEST_STAGE_{table_name.upper()}_{run_token.upper()}"
+
+        business_columns = [
+            column for column in column_names if column != "_extracted_at"
+        ]
+        update_assignments = ", ".join(
+            f'target."{column}" = source."{column}"'
+            for column in business_columns
+        )
+        update_assignments += ', target."_extracted_at" = source."_extracted_at"'
+        insert_columns = [*business_columns, "_extracted_at"]
+        insert_column_sql = ", ".join(f'"{column}"' for column in insert_columns)
+        insert_values_sql = ", ".join(
+            f'source."{column}"' for column in insert_columns
         )
 
-        cursor.execute(f"PUT file://{parquet_path} {stage_path} OVERWRITE = TRUE;")
-        cursor.execute(f"TRUNCATE TABLE {bronze_table};")
-
+        cursor.execute(f"CREATE TEMPORARY TABLE {temp_table} LIKE {bronze_table}")
+        cursor.execute(f'ALTER TABLE {temp_table} ADD COLUMN "_operation" VARCHAR')
+        cursor.execute(f"PUT file://{parquet_path} {stage_path} OVERWRITE = TRUE")
         cursor.execute(
             f"""
-            COPY INTO {bronze_table}
+            COPY INTO {temp_table}
             FROM {stage_path}
-            FILES = ('{table_name}.parquet')
+            FILES = ('{file_name}')
             FILE_FORMAT = (TYPE = PARQUET)
             MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
             FORCE = TRUE
@@ -166,19 +320,64 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
         )
         copy_results = cursor.fetchall()
         loaded_rows = sum(int(result[3]) for result in copy_results)
-        if loaded_rows != len(df):
+        if loaded_rows != len(dataframe):
             raise RuntimeError(
-                f"Expected to load {len(df)} rows into {bronze_table}, "
+                f"Expected to stage {len(dataframe)} changed rows for {bronze_table}, "
                 f"but Snowflake loaded {loaded_rows}."
             )
-        cursor.execute(
-            f'UPDATE {bronze_table} SET "_extracted_at" = CURRENT_TIMESTAMP() '
-            'WHERE "_extracted_at" IS NULL'
-        )
 
-        print(f"Successfully loaded data into {bronze_table}!")
+        cursor.execute("BEGIN")
+        try:
+            cursor.execute(
+                f"""
+                MERGE INTO {bronze_table} AS target
+                USING {temp_table} AS source
+                    ON target."{primary_key.lower()}" = source."{primary_key.lower()}"
+                WHEN MATCHED AND source."_operation" = 'D' THEN DELETE
+                WHEN MATCHED THEN UPDATE SET {update_assignments}
+                WHEN NOT MATCHED AND source."_operation" <> 'D' THEN
+                    INSERT ({insert_column_sql})
+                    VALUES ({insert_values_sql})
+                """
+            )
+            if full_refresh:
+                cursor.execute(
+                    f"""
+                    DELETE FROM {bronze_table} AS target
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM {temp_table} AS source
+                        WHERE source."{primary_key.lower()}" =
+                            target."{primary_key.lower()}"
+                    )
+                    """
+                )
+            cursor.execute(
+                f"""
+                MERGE INTO {watermark_table} AS target
+                USING (
+                    SELECT %s AS TABLE_NAME, %s AS LAST_SYNC_VERSION
+                ) AS source
+                    ON target.TABLE_NAME = source.TABLE_NAME
+                WHEN MATCHED THEN UPDATE
+                    SET LAST_SYNC_VERSION = source.LAST_SYNC_VERSION
+                WHEN NOT MATCHED THEN INSERT (TABLE_NAME, LAST_SYNC_VERSION)
+                    VALUES (source.TABLE_NAME, source.LAST_SYNC_VERSION)
+                """,
+                (table_name, upper_version),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+        cursor.execute(f"REMOVE {stage_path}")
+        print(
+            f"Applied {loaded_rows} {'full-refresh' if full_refresh else 'incremental'} "
+            f"rows to {bronze_table}; watermark is {upper_version}."
+        )
     finally:
-        if os.path.exists(parquet_path):
+        if parquet_path and os.path.exists(parquet_path):
             os.remove(parquet_path)
         cursor.close()
         conn.close()

@@ -27,10 +27,11 @@ def generate_fake_data_task():
 
 with DAG(
     dag_id="dag_seed_sqlserver",
-    description="Gera dados ficticios no SQL Server a cada 1 minuto",
+    description="Gera dados ficticios no SQL Server a cada 5 minutos e aguarda a carga completa.",
     start_date=datetime(2026, 9, 28),
-    schedule="*/1 * * * *",
+    schedule="*/5 * * * *",
     catchup=False,
+    max_active_runs=1,
     default_args={
         "owner": "data_engineering",
         "depends_on_past": False,
@@ -47,6 +48,10 @@ with DAG(
     trigger_bronze_ingestion = TriggerDagRunOperator(
         task_id="trigger_bronze_ingestion",
         trigger_dag_id="dag_sqlserver_to_snowflake_bronze",
+        wait_for_completion=True,
+        poke_interval=30,
+        allowed_states=["success"],
+        failed_states=["failed"],
     )
 
     generate_fake_data >> trigger_bronze_ingestion

@@ -13,7 +13,7 @@ x-airflow-common:
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__API__SECRET_KEY: "${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no arquivo .env}"
     AIRFLOW__API_AUTH__JWT_SECRET: "${AIRFLOW_API_AUTH_JWT_SECRET:?Defina AIRFLOW_API_AUTH_JWT_SECRET no arquivo .env}"
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__LOGGING__LOG_CLI_COMMANDS: 'False'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
@@ -53,6 +53,14 @@ services:
       - "${MSSQL_PORT}:1433"
     volumes:
       - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -C -Q "SELECT 1" -b
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   # ============================================================================
   # 2. AIRFLOW METADATA DATABASE: PostgreSQL
@@ -117,6 +125,8 @@ services:
       airflow-init:
         condition: service_completed_successfully
       airflow-webserver:
+        condition: service_healthy
+      sqlserver:
         condition: service_healthy
 
 volumes:

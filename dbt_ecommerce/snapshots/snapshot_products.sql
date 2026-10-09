@@ -6,6 +6,7 @@
       target_schema='SILVER',
       unique_key='id_product',
       strategy='check',
+      invalidate_hard_deletes=true,
       check_cols=[
         'sku',
         'product_name',

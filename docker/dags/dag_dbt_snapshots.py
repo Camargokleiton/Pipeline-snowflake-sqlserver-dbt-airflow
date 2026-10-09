@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 from airflow import DAG
 from airflow.hooks.base import BaseHook
+from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from airflow.providers.standard.operators.python import PythonOperator
 
 
@@ -104,13 +105,29 @@ def run_dbt_snapshots() -> None:
     run_dbt_command("snapshot")
 
 
+def run_dbt_staging_models() -> None:
+    run_dbt_command("run", "--select", "path:models/staging")
+
+
 def run_dbt_gold_models() -> None:
     run_dbt_command("run", "--select", "path:models/marts")
 
 
+def create_dbt_schemas() -> None:
+    snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
+    connection = snowflake_hook.get_conn()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("CREATE SCHEMA IF NOT EXISTS ERP_DATABASE.SILVER")
+        cursor.execute("CREATE SCHEMA IF NOT EXISTS ERP_DATABASE.GOLD")
+    finally:
+        cursor.close()
+        connection.close()
+
+
 with DAG(
     dag_id="dag_dbt_snapshots",
-    description="Capture SCD Type 2 snapshots and rebuild Gold marts in Snowflake.",
+    description="Create dbt schemas, build Silver staging, capture SCD Type 2 snapshots, and rebuild Gold marts.",
     start_date=datetime(2026, 1, 1),
     schedule=None,
     catchup=False,
@@ -121,8 +138,18 @@ with DAG(
         "retries": 1,
         "retry_delay": timedelta(minutes=2),
     },
-    tags=["dbt", "snowflake", "snapshots", "scd-type-2", "gold"],
+    tags=["dbt", "snowflake", "staging", "snapshots", "scd-type-2", "gold"],
 ) as dag:
+    ensure_schemas = PythonOperator(
+        task_id="create_silver_and_gold_schemas",
+        python_callable=create_dbt_schemas,
+    )
+
+    build_staging = PythonOperator(
+        task_id="build_silver_staging",
+        python_callable=run_dbt_staging_models,
+    )
+
     snapshot_dimensions = PythonOperator(
         task_id="snapshot_customer_and_product_changes",
         python_callable=run_dbt_snapshots,
@@ -133,4 +160,4 @@ with DAG(
         python_callable=run_dbt_gold_models,
     )
 
-    snapshot_dimensions >> build_gold_marts
+    ensure_schemas >> build_staging >> snapshot_dimensions >> build_gold_marts

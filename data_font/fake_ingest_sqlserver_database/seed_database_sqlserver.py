@@ -170,6 +170,29 @@ def ensure_schema():
                 """,
                 (description, f"{category_name}%", description),
             )
+        conn.execute(
+            f"ALTER DATABASE [{safe_database_name}] SET CHANGE_TRACKING = ON "
+            "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)"
+        )
+        for table_name in (
+            "customers",
+            "categories",
+            "products",
+            "orders",
+            "order_items",
+            "payments",
+        ):
+            conn.execute(
+                f"""
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM sys.change_tracking_tables
+                    WHERE object_id = OBJECT_ID(N'dbo.{table_name}')
+                )
+                    ALTER TABLE dbo.{table_name}
+                    ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON)
+                """
+            )
 
 
 def insert_fake_data(counts, seed=None):
