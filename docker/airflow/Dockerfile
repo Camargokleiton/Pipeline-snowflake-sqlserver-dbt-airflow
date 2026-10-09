@@ -19,3 +19,8 @@ RUN pip install --no-cache-dir \
     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt" \
     "apache-airflow==${AIRFLOW_VERSION}" \
     -r /tmp/airflow-requirements.txt
+
+RUN python -m venv /home/airflow/dbt-venv \
+    && /home/airflow/dbt-venv/bin/pip install --no-cache-dir \
+        "dbt-core==1.11.11" \
+        "dbt-snowflake==1.11.5"

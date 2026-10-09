@@ -29,6 +29,7 @@ x-airflow-common:
     FAKE_ORDERS: "${FAKE_ORDERS:-200}"
   volumes:
     - ./docker/dags:/opt/airflow/dags
+    - ./dbt_ecommerce:/opt/airflow/dbt_ecommerce:ro
     - ./data_font/fake_ingest_sqlserver_database:/opt/airflow/data_font/fake_ingest_sqlserver_database:ro
     - ./docker/logs:/opt/airflow/logs
     - ./docker/plugins:/opt/airflow/plugins

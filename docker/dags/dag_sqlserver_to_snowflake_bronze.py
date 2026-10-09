@@ -6,6 +6,7 @@ from airflow import DAG
 from airflow.providers.microsoft.mssql.hooks.mssql import MsSqlHook
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 
 
 default_args = {
@@ -159,6 +160,7 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
             FILES = ('{table_name}.parquet')
             FILE_FORMAT = (TYPE = PARQUET)
             MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
+            FORCE = TRUE
             ON_ERROR = 'ABORT_STATEMENT';
             """
         )
@@ -188,6 +190,7 @@ with DAG(
     description="Pipeline ELT via Parquet: Extrai do SQL Server, gera Parquet e carrega no Snowflake Bronze",
     schedule=None,
     catchup=False,
+    max_active_runs=1,
     tags=["ingestion", "sqlserver", "snowflake", "bronze", "parquet"],
 ) as dag:
     create_target = PythonOperator(
@@ -204,4 +207,14 @@ with DAG(
         )
         ingest_tasks.append(task)
 
+    trigger_dbt_snapshots = TriggerDagRunOperator(
+        task_id="trigger_dbt_snapshots",
+        trigger_dag_id="dag_dbt_snapshots",
+        wait_for_completion=True,
+        poke_interval=30,
+        allowed_states=["success"],
+        failed_states=["failed"],
+    )
+
     create_target >> ingest_tasks
+    ingest_tasks >> trigger_dbt_snapshots

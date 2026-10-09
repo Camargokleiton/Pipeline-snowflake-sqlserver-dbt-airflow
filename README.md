@@ -112,11 +112,13 @@ In **Airflow UI → Admin → Connections**, create a connection with:
 | Account, username, password | Your Snowflake account credentials |
 | Extra | Your Snowflake `warehouse` and `role` |
 
-Grant the configured Snowflake role the privileges needed by the ingestion DAG. Do not commit connection secrets.
+Grant the configured Snowflake role the privileges needed to load Bronze and create/update snapshot tables in Silver. Do not commit connection secrets.
 
 ### 4. Generate and ingest data
 
-The `dag_seed_sqlserver` DAG runs on a 20-minute schedule. It creates/ensures the SQL Server schema, inserts a synthetic batch, then triggers `dag_sqlserver_to_snowflake_bronze` to load the source tables into Snowflake. Both DAGs can also be triggered from the Airflow UI.
+The `dag_seed_sqlserver` DAG runs every minute. It creates/ensures the SQL Server schema, inserts a synthetic batch, then triggers `dag_sqlserver_to_snowflake_bronze` to load the source tables into Snowflake. Once all six Bronze loads succeed, the ingestion DAG triggers `dag_dbt_snapshots` and waits for its result.
+
+The snapshot DAG runs `dbt snapshot` using the existing Airflow `snowflake` connection. dbt compares each source row with the saved snapshot and creates a new SCD Type 2 version only when the configured customer or product attributes change. No change means no new version. The snapshot DAG can also be triggered manually from the Airflow UI.
 
 The Bronze tables are `RAW_CUSTOMERS`, `RAW_CATEGORIES`, `RAW_PRODUCTS`, `RAW_ORDERS`, `RAW_ORDER_ITEMS`, and `RAW_PAYMENTS` in `ERP_DATABASE.BRONZE`.
 
@@ -151,21 +153,22 @@ dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:mo
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-Run `dbt snapshot` after each new Bronze ingestion to capture changes before rebuilding the Gold marts. Snapshots retain history only from their first run onward; changes that happened before snapshot history was initialized cannot be reconstructed automatically.
+Airflow runs snapshots automatically after each successful Bronze ingestion. To run them manually, use `dbt snapshot`. Snapshots retain history only from their first run onward; changes that happened before snapshot history was initialized cannot be reconstructed automatically.
 
 The profile's `schema: BRONZE` is the default schema; the project's schema-generation macro routes staging models and snapshots to `SILVER` and marts to `GOLD`. Bronze source definitions are in [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Operational notes
 
-- Airflow automates data generation and Bronze ingestion. **dbt is not currently part of the Airflow DAGs**; run the dbt commands separately after ingestion.
+- Airflow automates data generation, Bronze ingestion, and SCD Type 2 snapshot capture. Gold marts still need to be rebuilt separately with dbt.
 - Staging models are views, dbt snapshots are history tables in Silver, and Gold marts are tables.
-- The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC. Datetimes are serialized as ISO strings in Parquet and loaded into Snowflake timestamp columns to avoid timestamp-unit corruption.
+- The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC. `COPY INTO` uses `FORCE = TRUE` so Snowflake reloads a staged file even when its name was used before; the DAG also limits itself to one active run to prevent concurrent truncates and loads. Datetimes are serialized as ISO strings in Parquet and loaded into Snowflake timestamp columns to avoid timestamp-unit corruption.
 - The generator appends synthetic rows on each run and aligns each customer's creation date with their earliest generated order. Adjust the `FAKE_*` settings to control the size of each batch.
 - `docker compose down` stops the services. Docker volumes preserve SQL Server and Airflow metadata; removing volumes deletes that local state.
 
 ## Validation performed
 
 - The seed and Snowflake ingestion DAGs completed successfully after the timestamp and generated-date fixes.
+- A controlled run completed all six Bronze table loads, then triggered the dbt snapshot DAG; the snapshot task completed successfully.
 - The complete dbt build passed: 2 snapshots, 9 models, and 39 data tests (50 total successful results).
 - Date-range checks passed across Silver and snapshot history. The only missing payment dates are for `PENDING` payments; all other payment dates are valid timestamps.
 - Every Gold order row matched a customer dimension version effective on its order date.
@@ -290,11 +293,13 @@ Na interface do Airflow, acesse **Admin → Connections** e crie uma conexão:
 | Account, username, password | Credenciais da sua conta Snowflake |
 | Extra | `warehouse` e `role` do Snowflake |
 
-Conceda à role configurada os privilégios necessários para a DAG de ingestão. Não envie segredos da conexão ao repositório.
+Conceda à role configurada os privilégios necessários para carregar o Bronze e criar/atualizar as tabelas de snapshots na Silver. Não envie segredos da conexão ao repositório.
 
 ### 4. Gere e ingira os dados
 
-A DAG `dag_seed_sqlserver` é agendada a cada 20 minutos. Ela cria ou garante o schema no SQL Server, insere uma carga sintética e então dispara a DAG `dag_sqlserver_to_snowflake_bronze`, que carrega as tabelas de origem no Snowflake. Também é possível disparar as duas DAGs manualmente pela interface do Airflow.
+A DAG `dag_seed_sqlserver` roda a cada minuto. Ela cria ou garante o schema no SQL Server, insere uma carga sintética e então dispara a DAG `dag_sqlserver_to_snowflake_bronze`, que carrega as tabelas de origem no Snowflake. Após o sucesso das seis cargas Bronze, a DAG de ingestão dispara `dag_dbt_snapshots` e aguarda seu resultado.
+
+A DAG de snapshots executa `dbt snapshot` usando a conexão Airflow existente `snowflake`. O dbt compara cada linha de origem com o snapshot salvo e cria uma nova versão SCD Type 2 somente quando os atributos configurados de cliente ou produto mudam. Sem alteração, nenhuma versão nova é criada. A DAG também pode ser disparada manualmente pela interface do Airflow.
 
 As tabelas Bronze são `RAW_CUSTOMERS`, `RAW_CATEGORIES`, `RAW_PRODUCTS`, `RAW_ORDERS`, `RAW_ORDER_ITEMS` e `RAW_PAYMENTS`, no schema `ERP_DATABASE.BRONZE`.
 
@@ -329,21 +334,22 @@ dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:mo
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-Execute `dbt snapshot` após cada nova ingestão para capturar alterações antes de reconstruir os marts Gold. Os snapshots preservam o histórico somente a partir da primeira execução; alterações anteriores à inicialização não podem ser reconstruídas automaticamente.
+O Airflow executa os snapshots automaticamente após cada ingestão Bronze concluída com sucesso. Para executá-los manualmente, use `dbt snapshot`. Os snapshots preservam o histórico somente a partir da primeira execução; alterações anteriores à inicialização não podem ser reconstruídas automaticamente.
 
 O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona os modelos de staging e snapshots para `SILVER` e os marts para `GOLD`. As fontes Bronze estão definidas em [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Observações operacionais
 
-- O Airflow automatiza a geração dos dados e a ingestão no Bronze. **O dbt ainda não faz parte das DAGs do Airflow**; execute os comandos do dbt separadamente após a ingestão.
+- O Airflow automatiza a geração dos dados, a ingestão Bronze e a captura de snapshots SCD Type 2. Ainda é preciso reconstruir os marts Gold separadamente com dbt.
 - Os modelos staging são views, snapshots dbt são tabelas históricas na Silver e os marts Gold são tabelas.
-- A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental. Datas são serializadas como strings ISO no Parquet e carregadas em colunas timestamp no Snowflake para evitar corrupção da unidade temporal.
+- A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental. `COPY INTO` usa `FORCE = TRUE` para recarregar um arquivo stageado mesmo que o nome já tenha sido usado; a DAG também permite somente uma execução ativa para evitar truncamentos e cargas concorrentes. Datas são serializadas como strings ISO no Parquet e carregadas em colunas timestamp no Snowflake para evitar corrupção da unidade temporal.
 - O gerador acrescenta dados sintéticos a cada execução e alinha a data de criação de cada cliente ao seu primeiro pedido gerado. Ajuste as variáveis `FAKE_*` para controlar o tamanho de cada carga.
 - `docker compose down` para os serviços. Os volumes Docker preservam os dados locais do SQL Server e os metadados do Airflow; removê-los apaga esse estado local.
 
 ## Validações realizadas
 
 - As DAGs de geração e ingestão Snowflake concluíram com sucesso após as correções de timestamps e datas dos dados sintéticos.
+- Uma execução controlada concluiu as seis cargas Bronze e acionou a DAG de snapshots dbt; a tarefa de snapshot terminou com sucesso.
 - O build completo do dbt passou: 2 snapshots, 9 modelos e 39 testes (50 resultados bem-sucedidos no total).
 - Os testes de datas passaram na Silver e no histórico dos snapshots. Datas de pagamento ficam nulas somente para pagamentos `PENDING`; as demais são timestamps válidos.
 - Todas as linhas de pedidos Gold foram associadas a uma versão da dimensão de clientes válida na data do pedido.
