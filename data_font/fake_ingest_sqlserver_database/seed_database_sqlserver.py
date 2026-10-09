@@ -39,6 +39,15 @@ CONN_STR_MASTER = (
 )
 
 
+CATEGORIES = [
+    ("Electronics", "Dispositivos eletronicos e acessorios para uso domestico e pessoal."),
+    ("Apparel", "Roupas, calcados e acessorios para diferentes ocasioes."),
+    ("Home & Kitchen", "Utensilios, moveis e itens para casa e cozinha."),
+    ("Sports", "Artigos e equipamentos para atividades fisicas e esportivas."),
+    ("Books", "Livros e materiais de leitura sobre diversos assuntos."),
+]
+
+
 def get_env_int(name, default):
     value = os.getenv(name, str(default))
     try:
@@ -151,6 +160,16 @@ def ensure_schema():
     with get_connection(db_name=DATABASE_NAME) as conn:
         for statement in statements:
             conn.execute(statement)
+        for category_name, description in CATEGORIES:
+            conn.execute(
+                """
+                UPDATE categories
+                SET description = ?
+                WHERE category_name LIKE ?
+                  AND (description IS NULL OR description <> ?)
+                """,
+                (description, f"{category_name}%", description),
+            )
 
 
 def insert_fake_data(counts, seed=None):
@@ -164,16 +183,16 @@ def insert_fake_data(counts, seed=None):
     cities = [("Sao Paulo", "SP"), ("Rio de Janeiro", "RJ"), ("Belo Horizonte", "MG"), ("Curitiba", "PR")]
     methods = ["CREDIT_CARD", "PIX", "BANK_SLIP"]
     statuses = ["CREATED", "APPROVED", "PICKING", "SHIPPED", "DELIVERED", "CANCELLED"]
-    categories = ["Electronics", "Apparel", "Home & Kitchen", "Sports", "Books"]
     product_names = ["fogao", "geladeira", "microondas", "televisao", "celular", "notebook", "camiseta", "tenis"]
 
     with get_connection(autocommit=False, db_name=DATABASE_NAME) as conn:
         cursor = conn.cursor()
         category_ids = []
         for index in range(counts["categories"]):
+            category_name, description = CATEGORIES[index % len(CATEGORIES)]
             cursor.execute(
                 "INSERT INTO categories (category_name, description) OUTPUT INSERTED.id_category VALUES (?, ?)",
-                (f"{categories[index % len(categories)]} {index + 1}", "Categoria gerada automaticamente"),
+                (f"{category_name} {index + 1}", description),
             )
             category_ids.append(cursor.fetchone()[0])
 

@@ -4,10 +4,10 @@ with source as (
 
 renamed as (
     select
-        id_category,
-        trim(category_name) as category_name,
-        trim(description) as description,
-        _extracted_at
+        "id_category" as id_category,
+        trim("category_name") as category_name,
+        trim("description") as description,
+        "_extracted_at" as _extracted_at
     from source
 )
 

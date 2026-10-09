@@ -27,9 +27,9 @@ def generate_fake_data_task():
 
 with DAG(
     dag_id="dag_seed_sqlserver",
-    description="Gera dados ficticios no SQL Server a cada 20 minutos",
+    description="Gera dados ficticios no SQL Server a cada 1 minuto",
     start_date=datetime(2026, 9, 28),
-    schedule="*/20 * * * *",
+    schedule="*/1 * * * *",
     catchup=False,
     default_args={
         "owner": "data_engineering",

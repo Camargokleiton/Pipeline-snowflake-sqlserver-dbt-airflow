@@ -71,7 +71,8 @@ def create_snowflake_bronze_target():
             )
             raw_table_name = f"RAW_{table_name.upper()}"
             cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.{raw_table_name} ({columns_sql})"
+                f'CREATE TABLE IF NOT EXISTS {SNOWFLAKE_DATABASE}.{BRONZE_SCHEMA}.{raw_table_name} '
+                f'({columns_sql}, "_extracted_at" TIMESTAMP_NTZ)'
             )
 
         print("Snowflake bronze target created successfully.")
@@ -90,9 +91,8 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
     if df.empty:
         print(f"Table {table_name} is empty. Skipping processing.")
         return
-
     df.columns = [str(col).lower() for col in df.columns]
-    df["_extracted_at"] = pd.Timestamp.now()
+    df.columns = [str(col).lower() for col in df.columns]
     df = df.drop_duplicates(subset=[primary_key.lower()])
 
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -116,6 +116,9 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
             )
             + ")"
         )
+        cursor.execute(
+            f'ALTER TABLE {bronze_table} ADD COLUMN IF NOT EXISTS "_extracted_at" TIMESTAMP_NTZ'
+        )
 
         cursor.execute(f"PUT file://{parquet_path} {stage_path} OVERWRITE = TRUE;")
         cursor.execute(f"TRUNCATE TABLE {bronze_table};")
@@ -129,6 +132,10 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
             MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
             ON_ERROR = 'CONTINUE';
             """
+        )
+        cursor.execute(
+            f'UPDATE {bronze_table} SET "_extracted_at" = CURRENT_TIMESTAMP() '
+            'WHERE "_extracted_at" IS NULL'
         )
 
         print(f"Successfully loaded data into {bronze_table}!")
