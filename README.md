@@ -159,9 +159,9 @@ The profile's `schema: BRONZE` is the default schema; the project's schema-gener
 ## Validation performed
 
 - Both Airflow DAGs completed a seed-to-Bronze run successfully.
-- All six dbt Silver staging views built successfully.
-- All 12 Silver uniqueness and not-null tests passed.
-- Gold marts and their integrity tests are implemented in the `dbt_ecommerce/models/marts/` directory.
+- All six dbt Silver staging views and all three Gold mart tables built successfully.
+- All 26 dbt data tests passed across Silver and Gold, including uniqueness, required fields, and relationships.
+- The complete nine-model dbt build finished successfully with no errors or warnings.
 
 ## English / Português
 
@@ -330,6 +330,6 @@ O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona o
 ## Validações realizadas
 
 - As duas DAGs do Airflow concluíram com sucesso uma execução da geração até a carga Bronze.
-- As seis views de staging Silver foram criadas com sucesso pelo dbt.
-- Os 12 testes Silver de unicidade e valores não nulos passaram.
-- Os marts Gold e seus testes de integridade estão implementados em `dbt_ecommerce/models/marts/`.
+- As seis views de staging Silver e as três tabelas marts Gold foram criadas com sucesso pelo dbt.
+- Os 26 testes dbt das camadas Silver e Gold passaram, incluindo unicidade, campos obrigatórios e relacionamentos.
+- O build completo dos nove modelos dbt terminou sem erros ou avisos.
