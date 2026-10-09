@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: One row per customer, with standardized customer and location attributes.
+    columns:
+      - name: customer_id
+        description: Unique source customer identifier.
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - not_null
+
+  - name: dim_products
+    description: One row per product, enriched with its category attributes.
+    columns:
+      - name: product_id
+        description: Unique source product identifier.
+        tests:
+          - unique
+          - not_null
+      - name: sku
+        tests:
+          - unique
+          - not_null
+      - name: category_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_categories')
+              field: id_category
+
+  - name: fct_orders
+    description: One row per order, with item totals and aggregated payment details.
+    columns:
+      - name: order_id
+        description: Unique order identifier and the grain of this fact table.
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+      - name: order_total
+        tests:
+          - not_null

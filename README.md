@@ -25,7 +25,15 @@ flowchart LR
 | --- | --- | --- |
 | **Bronze** | Raw copies of the SQL Server source tables, including extraction timestamps. | Airflow extracts to Parquet and loads `RAW_*` tables into `ERP_DATABASE.BRONZE`. |
 | **Silver** | Cleaned and standardized staging models. | dbt creates views in `ERP_DATABASE.SILVER`. |
-| **Gold** | Business-facing dimensions and facts. | dbt creates tables in `ERP_DATABASE.GOLD`. |
+| **Gold** | Analytics-ready customer/product dimensions and an order-level fact table. | dbt creates `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `FCT_ORDERS` tables in `ERP_DATABASE.GOLD`. |
+
+### Gold marts
+
+| Model | Grain | Contents |
+| --- | --- | --- |
+| `dim_customers` | One row per customer | Customer identity, contact, and location attributes. |
+| `dim_products` | One row per product | Product, pricing, inventory, and joined category attributes. |
+| `fct_orders` | One row per order | Order totals, shipping, item-line count, total quantity, item subtotal, and payment details. Item and payment data are aggregated before joining so they do not multiply order rows. |
 
 ## Technology stack
 
@@ -134,8 +142,8 @@ Set `DBT_SNOWFLAKE_PASSWORD` in your local shell, then run from the repository r
 dbt debug --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
-dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select marts
-dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select marts
+dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
+dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
 The profile's `schema: BRONZE` is the default schema; the project's schema-generation macro routes staging models to `SILVER` and marts to `GOLD`. Bronze source definitions are in [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
@@ -153,6 +161,7 @@ The profile's `schema: BRONZE` is the default schema; the project's schema-gener
 - Both Airflow DAGs completed a seed-to-Bronze run successfully.
 - All six dbt Silver staging views built successfully.
 - All 12 Silver uniqueness and not-null tests passed.
+- Gold marts and their integrity tests are implemented in the `dbt_ecommerce/models/marts/` directory.
 
 ## English / Português
 
@@ -187,7 +196,15 @@ flowchart LR
 | --- | --- | --- |
 | **Bronze** | Cópias brutas das tabelas de origem do SQL Server, com data de extração. | Airflow extrai para Parquet e carrega tabelas `RAW_*` em `ERP_DATABASE.BRONZE`. |
 | **Silver** | Modelos de staging limpos e padronizados. | dbt cria views em `ERP_DATABASE.SILVER`. |
-| **Gold** | Dimensões e fatos voltados ao negócio. | dbt cria tabelas em `ERP_DATABASE.GOLD`. |
+| **Gold** | Dimensões de clientes/produtos e fato analítico no nível do pedido. | dbt cria as tabelas `DIM_CUSTOMERS`, `DIM_PRODUCTS` e `FCT_ORDERS` em `ERP_DATABASE.GOLD`. |
+
+### Marts Gold
+
+| Modelo | Granularidade | Conteúdo |
+| --- | --- | --- |
+| `dim_customers` | Uma linha por cliente | Identificação, contato e localização do cliente. |
+| `dim_products` | Uma linha por produto | Produto, preços, estoque e atributos da categoria relacionada. |
+| `fct_orders` | Uma linha por pedido | Totais, frete, quantidade de itens, quantidade total, subtotal dos itens e dados de pagamento. Itens e pagamentos são agregados antes dos joins para não multiplicar pedidos. |
 
 ## Tecnologias
 
@@ -296,8 +313,8 @@ Defina `DBT_SNOWFLAKE_PASSWORD` no terminal local e execute, a partir da raiz do
 dbt debug --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt"
 dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select staging
-dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select marts
-dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select marts
+dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
+dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
 O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona os modelos de staging para `SILVER` e os marts para `GOLD`. As fontes Bronze estão definidas em [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
@@ -315,3 +332,4 @@ O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona o
 - As duas DAGs do Airflow concluíram com sucesso uma execução da geração até a carga Bronze.
 - As seis views de staging Silver foram criadas com sucesso pelo dbt.
 - Os 12 testes Silver de unicidade e valores não nulos passaram.
+- Os marts Gold e seus testes de integridade estão implementados em `dbt_ecommerce/models/marts/`.
