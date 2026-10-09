@@ -171,8 +171,15 @@ def ensure_schema():
                 (description, f"{category_name}%", description),
             )
         conn.execute(
-            f"ALTER DATABASE [{safe_database_name}] SET CHANGE_TRACKING = ON "
-            "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)"
+            f"""
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.change_tracking_databases
+                WHERE database_id = DB_ID(N'{safe_database_name}')
+            )
+                ALTER DATABASE [{safe_database_name}] SET CHANGE_TRACKING = ON
+                    (CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)
+            """
         )
         for table_name in (
             "customers",

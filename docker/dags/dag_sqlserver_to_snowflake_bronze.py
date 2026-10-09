@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pandas as pd
 from airflow import DAG
@@ -33,7 +33,6 @@ TEMP_DIR = "/tmp/parquet_ingestion"
 SNOWFLAKE_DATABASE = "ERP_DATABASE"
 BRONZE_SCHEMA = "BRONZE"
 SNOWFLAKE_CONN_ID = "snowflake"
-TIMESTAMP_COLUMNS = {"created_at", "updated_at", "order_date", "payment_date"}
 SOURCE_SQL_TYPES = {
     "bigint": "NUMBER",
     "int": "NUMBER",
@@ -57,31 +56,6 @@ SOURCE_SQL_TYPES = {
 }
 
 
-def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
-    dtype = str(series.dtype).lower()
-    if (
-        str(series.name).lower() in TIMESTAMP_COLUMNS
-        or pd.api.types.is_datetime64_any_dtype(series.dtype)
-        or (
-            series.dtype == object
-            and any(
-                isinstance(value, (date, datetime))
-                for value in series.dropna().head(20)
-            )
-        )
-    ):
-        return "TIMESTAMP_NTZ"
-    if "int" in dtype or "uint" in dtype:
-        return "NUMBER"
-    if "float" in dtype or "double" in dtype or "decimal" in dtype:
-        return "FLOAT"
-    if "bool" in dtype:
-        return "BOOLEAN"
-    if "datetime" in dtype or "date" in dtype:
-        return "TIMESTAMP"
-    return "VARCHAR"
-
-
 def _serialize_timestamps_for_parquet(
     dataframe: pd.DataFrame,
     snowflake_types: dict[str, str],
@@ -94,8 +68,19 @@ def _serialize_timestamps_for_parquet(
             dataframe[column] = values.dt.strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-def _snowflake_type_from_sql_type(sql_type: str) -> str:
-    return SOURCE_SQL_TYPES.get(sql_type.lower(), "VARCHAR")
+def _snowflake_type_from_sql_type(
+    sql_type: str,
+    numeric_precision: int | None = None,
+    numeric_scale: int | None = None,
+) -> str:
+    normalized_type = sql_type.lower()
+    if normalized_type in {"decimal", "numeric"} and numeric_precision is not None:
+        return f"NUMBER({numeric_precision}, {numeric_scale or 0})"
+    if normalized_type == "money":
+        return "NUMBER(19, 4)"
+    if normalized_type == "smallmoney":
+        return "NUMBER(10, 4)"
+    return SOURCE_SQL_TYPES.get(normalized_type, "VARCHAR")
 
 
 def create_snowflake_bronze_target():
@@ -126,7 +111,7 @@ def create_snowflake_bronze_target():
         for table_name in TABLES_CONFIG:
             columns = mssql_hook.get_records(
                 f"""
-                SELECT COLUMN_NAME, DATA_TYPE
+                SELECT COLUMN_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE
                 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = '{table_name}'
                 ORDER BY ORDINAL_POSITION
@@ -136,8 +121,8 @@ def create_snowflake_bronze_target():
                 continue
 
             columns_sql = ", ".join(
-                f'"{column_name.lower()}" {_snowflake_type_from_sql_type(sql_type)}'
-                for column_name, sql_type in columns
+                f'"{column_name.lower()}" {_snowflake_type_from_sql_type(sql_type, precision, scale)}'
+                for column_name, sql_type, precision, scale in columns
             )
             raw_table_name = f"RAW_{table_name.upper()}"
             cursor.execute(
@@ -156,7 +141,7 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
     mssql_hook = MsSqlHook(mssql_conn_id="mssql_default")
     table_columns = mssql_hook.get_records(
         f"""
-        SELECT COLUMN_NAME, DATA_TYPE
+        SELECT COLUMN_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = '{table_name}'
         ORDER BY ORDINAL_POSITION
@@ -164,10 +149,10 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
     )
     if not table_columns:
         raise RuntimeError(f"SQL Server source table dbo.{table_name} has no columns.")
-    column_names = [column_name.lower() for column_name, _ in table_columns]
+    column_names = [column[0].lower() for column in table_columns]
     source_types = {
-        column_name.lower(): _snowflake_type_from_sql_type(sql_type)
-        for column_name, sql_type in table_columns
+        column_name.lower(): _snowflake_type_from_sql_type(sql_type, precision, scale)
+        for column_name, sql_type, precision, scale in table_columns
     }
 
     snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
@@ -221,7 +206,6 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
                 FROM CHANGETABLE(CHANGES {qualified_source}, {last_version}) AS changes
                 LEFT JOIN {qualified_source} AS source
                     ON source.[{primary_key}] = changes.[{primary_key}]
-                WHERE changes.SYS_CHANGE_VERSION <= {upper_version}
                 ORDER BY changes.SYS_CHANGE_VERSION, changes.[{primary_key}]
             """
             dataframe = mssql_hook.get_pandas_df(changes_query)
