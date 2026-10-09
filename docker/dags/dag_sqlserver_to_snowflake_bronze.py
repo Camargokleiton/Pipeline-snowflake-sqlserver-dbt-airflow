@@ -47,7 +47,7 @@ def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
 
 def create_snowflake_bronze_target():
     """Cria database, schema e stage no Snowflake antes da ingestão."""
-    snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake_default")
+    snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake")
     conn = snowflake_hook.get_conn()
     cursor = conn.cursor()
 

@@ -30,7 +30,7 @@ def resolve_driver():
 SERVER = os.getenv("SQLSERVER_HOST", "127.0.0.1") + "," + os.getenv("MSSQL_PORT", "11433")
 USER = os.getenv("SQLSERVER_USER", "sa")
 PASSWORD = os.getenv("PASSWORD") or os.getenv("MSSQL_SA_PASSWORD", "")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "ERP_Ecommerce")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "ERP_DATABASE")
 DRIVER = resolve_driver()
 
 CONN_STR_MASTER = (
