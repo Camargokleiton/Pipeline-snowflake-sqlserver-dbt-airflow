@@ -31,10 +31,9 @@ with DAG(
     start_date=datetime(2026, 9, 28),
     schedule="*/1 * * * *",
     catchup=False,
-    max_active_runs=1,
     default_args={
         "owner": "data_engineering",
-        "depends_on_past": True,
+        "depends_on_past": False,
         "retries": 1,
         "retry_delay": timedelta(minutes=2),
     },
@@ -43,16 +42,11 @@ with DAG(
     generate_fake_data = PythonOperator(
         task_id="generate_fake_data",
         python_callable=generate_fake_data_task,
-        wait_for_downstream=True,
     )
 
     trigger_bronze_ingestion = TriggerDagRunOperator(
         task_id="trigger_bronze_ingestion",
         trigger_dag_id="dag_sqlserver_to_snowflake_bronze",
-        wait_for_completion=True,
-        poke_interval=30,
-        allowed_states=["success"],
-        failed_states=["failed"],
     )
 
     generate_fake_data >> trigger_bronze_ingestion

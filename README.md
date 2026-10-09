@@ -159,7 +159,7 @@ The profile's `schema: BRONZE` is the default schema; the project's schema-gener
 
 ## Operational notes
 
-- Airflow automates data generation, Bronze ingestion, and SCD Type 2 snapshot capture. The seed DAG waits for the Bronze ingestion and its snapshot run to succeed before starting another generation; only one seed run can be active at a time. If a cycle fails, subsequent seed runs remain blocked until the failed run is resolved. Gold marts still need to be rebuilt separately with dbt.
+- Airflow automates data generation, Bronze ingestion, and SCD Type 2 snapshot capture. Gold marts still need to be rebuilt separately with dbt.
 - Staging models are views, dbt snapshots are history tables in Silver, and Gold marts are tables.
 - The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC. `COPY INTO` uses `FORCE = TRUE` so Snowflake reloads a staged file even when its name was used before; the DAG also limits itself to one active run to prevent concurrent truncates and loads. Datetimes are serialized as ISO strings in Parquet and loaded into Snowflake timestamp columns to avoid timestamp-unit corruption.
 - The generator appends synthetic rows on each run and aligns each customer's creation date with their earliest generated order. Adjust the `FAKE_*` settings to control the size of each batch.
@@ -340,7 +340,7 @@ O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona o
 
 ## Observações operacionais
 
-- O Airflow automatiza a geração dos dados, a ingestão Bronze e a captura de snapshots SCD Type 2. A DAG de geração aguarda o sucesso da ingestão Bronze e dos snapshots antes de iniciar uma nova geração; somente uma execução de geração pode ficar ativa por vez. Se um ciclo falhar, as próximas gerações ficam bloqueadas até que a execução com falha seja resolvida. Ainda é preciso reconstruir os marts Gold separadamente com dbt.
+- O Airflow automatiza a geração dos dados, a ingestão Bronze e a captura de snapshots SCD Type 2. Ainda é preciso reconstruir os marts Gold separadamente com dbt.
 - Os modelos staging são views, snapshots dbt são tabelas históricas na Silver e os marts Gold são tabelas.
 - A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental. `COPY INTO` usa `FORCE = TRUE` para recarregar um arquivo stageado mesmo que o nome já tenha sido usado; a DAG também permite somente uma execução ativa para evitar truncamentos e cargas concorrentes. Datas são serializadas como strings ISO no Parquet e carregadas em colunas timestamp no Snowflake para evitar corrupção da unidade temporal.
 - O gerador acrescenta dados sintéticos a cada execução e alinha a data de criação de cada cliente ao seu primeiro pedido gerado. Ajuste as variáveis `FAKE_*` para controlar o tamanho de cada carga.
