@@ -14,7 +14,9 @@
         'unit_cost',
         'current_stock',
         'category_name',
-        'category_description'
+        'category_description',
+        'created_at',
+        'updated_at'
       ]
     )
 }}

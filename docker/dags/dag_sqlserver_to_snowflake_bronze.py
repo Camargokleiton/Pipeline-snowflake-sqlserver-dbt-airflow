@@ -31,13 +31,21 @@ TEMP_DIR = "/tmp/parquet_ingestion"
 SNOWFLAKE_DATABASE = "ERP_DATABASE"
 BRONZE_SCHEMA = "BRONZE"
 SNOWFLAKE_CONN_ID = "snowflake"
+TIMESTAMP_COLUMNS = {"created_at", "updated_at", "order_date", "payment_date"}
 
 
 def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
     dtype = str(series.dtype).lower()
-    if pd.api.types.is_datetime64_any_dtype(series.dtype) or (
-        series.dtype == object
-        and any(isinstance(value, (date, datetime)) for value in series.dropna().head(20))
+    if (
+        str(series.name).lower() in TIMESTAMP_COLUMNS
+        or pd.api.types.is_datetime64_any_dtype(series.dtype)
+        or (
+            series.dtype == object
+            and any(
+                isinstance(value, (date, datetime))
+                for value in series.dropna().head(20)
+            )
+        )
     ):
         return "TIMESTAMP_NTZ"
     if "int" in dtype or "uint" in dtype:

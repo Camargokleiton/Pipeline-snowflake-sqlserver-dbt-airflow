@@ -166,8 +166,9 @@ The profile's `schema: BRONZE` is the default schema; the project's schema-gener
 ## Validation performed
 
 - The seed and Snowflake ingestion DAGs completed successfully after the timestamp and generated-date fixes.
-- The complete dbt build passed: 2 snapshots, 9 models, and 36 data tests (47 total successful results).
-- All 14,200 Gold order rows matched a customer dimension version effective on the order date.
+- The complete dbt build passed: 2 snapshots, 9 models, and 39 data tests (50 total successful results).
+- Date-range checks passed across Silver and snapshot history. The only missing payment dates are for `PENDING` payments; all other payment dates are valid timestamps.
+- Every Gold order row matched a customer dimension version effective on its order date.
 
 ## English / Português
 
@@ -343,5 +344,6 @@ O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona o
 ## Validações realizadas
 
 - As DAGs de geração e ingestão Snowflake concluíram com sucesso após as correções de timestamps e datas dos dados sintéticos.
-- O build completo do dbt passou: 2 snapshots, 9 modelos e 36 testes (47 resultados bem-sucedidos no total).
-- Todas as 14.200 linhas de pedidos Gold foram associadas a uma versão da dimensão de clientes válida na data do pedido.
+- O build completo do dbt passou: 2 snapshots, 9 modelos e 39 testes (50 resultados bem-sucedidos no total).
+- Os testes de datas passaram na Silver e no histórico dos snapshots. Datas de pagamento ficam nulas somente para pagamentos `PENDING`; as demais são timestamps válidos.
+- Todas as linhas de pedidos Gold foram associadas a uma versão da dimensão de clientes válida na data do pedido.
