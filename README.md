@@ -153,13 +153,13 @@ dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:mo
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-Airflow runs snapshots automatically after each successful Bronze ingestion. To run them manually, use `dbt snapshot`. Snapshots retain history only from their first run onward; changes that happened before snapshot history was initialized cannot be reconstructed automatically.
+After each successful Bronze ingestion, Airflow runs the customer and product snapshots and then rebuilds the Gold marts. The Gold task runs only if the snapshot task succeeds. For manual execution, run `dbt snapshot` followed by `dbt run --select path:models/marts`. Snapshots retain history only from their first run onward; changes that happened before snapshot history was initialized cannot be reconstructed automatically.
 
 The profile's `schema: BRONZE` is the default schema; the project's schema-generation macro routes staging models and snapshots to `SILVER` and marts to `GOLD`. Bronze source definitions are in [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Operational notes
 
-- Airflow automates data generation, Bronze ingestion, and SCD Type 2 snapshot capture. Gold marts still need to be rebuilt separately with dbt.
+- Airflow automates data generation, Bronze ingestion, SCD Type 2 snapshot capture, and Gold mart rebuilds.
 - Staging models are views, dbt snapshots are history tables in Silver, and Gold marts are tables.
 - The ingestion DAG truncates each Bronze target table before loading its latest SQL Server extract. This is a full refresh, not incremental CDC. `COPY INTO` uses `FORCE = TRUE` so Snowflake reloads a staged file even when its name was used before; the DAG also limits itself to one active run to prevent concurrent truncates and loads. Datetimes are serialized as ISO strings in Parquet and loaded into Snowflake timestamp columns to avoid timestamp-unit corruption.
 - The generator appends synthetic rows on each run and aligns each customer's creation date with their earliest generated order. Adjust the `FAKE_*` settings to control the size of each batch.
@@ -334,13 +334,13 @@ dbt run --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:mo
 dbt test --project-dir dbt_ecommerce --profiles-dir "$HOME\.dbt" --select path:models/marts
 ```
 
-O Airflow executa os snapshots automaticamente após cada ingestão Bronze concluída com sucesso. Para executá-los manualmente, use `dbt snapshot`. Os snapshots preservam o histórico somente a partir da primeira execução; alterações anteriores à inicialização não podem ser reconstruídas automaticamente.
+Após cada ingestão Bronze concluída com sucesso, o Airflow executa os snapshots de clientes e produtos e, em seguida, reconstrói os marts Gold. A tarefa da Gold só roda se os snapshots terminarem com sucesso. Para executar manualmente, use `dbt snapshot` e depois `dbt run --select path:models/marts`. Os snapshots preservam o histórico somente a partir da primeira execução; alterações anteriores à inicialização não podem ser reconstruídas automaticamente.
 
 O `schema: BRONZE` no perfil é o schema padrão; a macro do projeto direciona os modelos de staging e snapshots para `SILVER` e os marts para `GOLD`. As fontes Bronze estão definidas em [`src_bronze.yml`](./dbt_ecommerce/models/staging/src_bronze.yml).
 
 ## Observações operacionais
 
-- O Airflow automatiza a geração dos dados, a ingestão Bronze e a captura de snapshots SCD Type 2. Ainda é preciso reconstruir os marts Gold separadamente com dbt.
+- O Airflow automatiza a geração dos dados, a ingestão Bronze, a captura de snapshots SCD Type 2 e a reconstrução dos marts Gold.
 - Os modelos staging são views, snapshots dbt são tabelas históricas na Silver e os marts Gold são tabelas.
 - A DAG de ingestão trunca cada tabela Bronze de destino antes de carregar a extração mais recente do SQL Server. É uma carga completa, não CDC incremental. `COPY INTO` usa `FORCE = TRUE` para recarregar um arquivo stageado mesmo que o nome já tenha sido usado; a DAG também permite somente uma execução ativa para evitar truncamentos e cargas concorrentes. Datas são serializadas como strings ISO no Parquet e carregadas em colunas timestamp no Snowflake para evitar corrupção da unidade temporal.
 - O gerador acrescenta dados sintéticos a cada execução e alinha a data de criação de cada cliente ao seu primeiro pedido gerado. Ajuste as variáveis `FAKE_*` para controlar o tamanho de cada carga.

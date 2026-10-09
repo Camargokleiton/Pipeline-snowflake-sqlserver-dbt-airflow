@@ -17,7 +17,7 @@ SNOWFLAKE_CONN_ID = "snowflake"
 DBT_EXECUTABLE = "/home/airflow/dbt-venv/bin/dbt"
 
 
-def run_dbt_snapshots() -> None:
+def run_dbt_command(*dbt_args: str) -> None:
     connection = BaseHook.get_connection(SNOWFLAKE_CONN_ID)
     extra = connection.extra_dejson
     account = extra.get("account") or connection.host
@@ -70,7 +70,7 @@ def run_dbt_snapshots() -> None:
 
         command = [
             DBT_EXECUTABLE,
-            "snapshot",
+            *dbt_args,
             "--project-dir",
             str(PROJECT_DIR),
             "--profiles-dir",
@@ -90,19 +90,27 @@ def run_dbt_snapshots() -> None:
         )
 
     if result.stdout:
-        LOGGER.info("dbt snapshot output:\n%s", result.stdout)
+        LOGGER.info("dbt %s output:\n%s", " ".join(dbt_args), result.stdout)
     if result.stderr:
-        LOGGER.info("dbt snapshot diagnostics:\n%s", result.stderr)
+        LOGGER.info("dbt %s diagnostics:\n%s", " ".join(dbt_args), result.stderr)
     if result.returncode:
         raise RuntimeError(
-            f"dbt snapshot failed with exit code {result.returncode}; "
+            f"dbt {' '.join(dbt_args)} failed with exit code {result.returncode}; "
             "see task logs for dbt output."
         )
 
 
+def run_dbt_snapshots() -> None:
+    run_dbt_command("snapshot")
+
+
+def run_dbt_gold_models() -> None:
+    run_dbt_command("run", "--select", "path:models/marts")
+
+
 with DAG(
     dag_id="dag_dbt_snapshots",
-    description="Capture changed customer and product versions in Snowflake with dbt snapshots.",
+    description="Capture SCD Type 2 snapshots and rebuild Gold marts in Snowflake.",
     start_date=datetime(2026, 1, 1),
     schedule=None,
     catchup=False,
@@ -113,9 +121,16 @@ with DAG(
         "retries": 1,
         "retry_delay": timedelta(minutes=2),
     },
-    tags=["dbt", "snowflake", "snapshots", "scd-type-2"],
+    tags=["dbt", "snowflake", "snapshots", "scd-type-2", "gold"],
 ) as dag:
     snapshot_dimensions = PythonOperator(
         task_id="snapshot_customer_and_product_changes",
         python_callable=run_dbt_snapshots,
     )
+
+    build_gold_marts = PythonOperator(
+        task_id="build_gold_marts",
+        python_callable=run_dbt_gold_models,
+    )
+
+    snapshot_dimensions >> build_gold_marts
