@@ -30,6 +30,7 @@ TABLES_CONFIG = {
 TEMP_DIR = "/tmp/parquet_ingestion"
 SNOWFLAKE_DATABASE = "ERP_DATABASE"
 BRONZE_SCHEMA = "BRONZE"
+SNOWFLAKE_CONN_ID = "snowflake"
 
 
 def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
@@ -47,7 +48,7 @@ def _snowflake_type_from_pandas_series(series: pd.Series) -> str:
 
 def create_snowflake_bronze_target():
     """Cria database, schema e stage no Snowflake antes da ingestão."""
-    snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake")
+    snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     conn = snowflake_hook.get_conn()
     cursor = conn.cursor()
 
@@ -98,7 +99,7 @@ def extract_to_parquet_and_load_snowflake(table_name: str, primary_key: str):
     parquet_path = os.path.join(TEMP_DIR, f"{table_name}.parquet")
     df.to_parquet(parquet_path, engine="pyarrow", compression="snappy", index=False)
 
-    snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake_default")
+    snowflake_hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     conn = snowflake_hook.get_conn()
     cursor = conn.cursor()
 
